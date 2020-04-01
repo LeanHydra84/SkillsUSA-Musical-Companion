@@ -1,20 +1,18 @@
-﻿using System;
-using System.IO;
+﻿using ExtensionMethods;
+using MsgBox;
+using System;
 using System.Collections.Generic;
-using System.ComponentModel;
-using System.Data;
 using System.Drawing;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using WMPLib;
-using MsgBox;
-using System.Runtime.InteropServices;
+using System.Linq;
 
 
 namespace Skills_Musical_Companion
 {
+
     public partial class Form1 : Form
     {
         //TODO:
@@ -23,16 +21,21 @@ namespace Skills_Musical_Companion
          * Maybe output shot speeds to be parsed by the game and passed to the shot functions?
          * 
          */
+
         
+
         WindowsMediaPlayer Player;
         Timer timer;
         bool hasStarted;
-        List<float> fileTiming;
-        List<string> fileList;
+
+        List<ShotEvent> FileList;
+
         bool muted = false;
         Font font;
         readonly int controlNumber;
         string duration = "0:00";
+        string FileName;
+        bool FileUploaded;
 
         //File output
         float bpm;
@@ -46,8 +49,8 @@ namespace Skills_Musical_Companion
             timer.Interval = 1;
             timer.Tick += new EventHandler(TimeRun);
             Reset();
-            fileList = new List<string>();
-            fileTiming = new List<float>();
+            FileList = new List<ShotEvent>();
+
             KeyPreview = true;
             this.KeyPress += new KeyPressEventHandler(Form1_KeyPress);
             EnableDisableButtons(false);
@@ -69,12 +72,12 @@ namespace Skills_Musical_Companion
 
         private void Form1_Load(object sender, EventArgs e)
         {
-
             pause.Enabled = false;
             pause.Text = "Play";
+            OriginalColors();
         }
 
-        void TimeRun(Object sender, EventArgs e)
+        void TimeRun(object sender, EventArgs e)
         {
             //Changes the slider to the right place
             progress_bar.Value = ((int)(Player.controls.currentPosition * 100) < progress_bar.Maximum) ? Convert.ToInt16(Player.controls.currentPosition * 100) : progress_bar.Maximum;
@@ -174,15 +177,17 @@ namespace Skills_Musical_Companion
                 Reset();
                 reset_button.Enabled = true;
                 GetBpm();
-                nameLabel.Text = "File: " + file.SafeFileName;
+                nameLabel.Text = "File: " + file.SafeFileName.Truncate(25);
+                FileName = file.SafeFileName;
+                FileUploaded = true;
             }
         }
 
         //Shows input box that asks for the BPM of the song
         void GetBpm()
         {
-            fileList.Clear();
-            fileTiming.Clear();
+            FileList.Clear();
+
             bpm = 0;
             while (bpm == 0)
             {
@@ -207,10 +212,37 @@ namespace Skills_Musical_Companion
 
         Point GetHeadPoint()
         {
-            float G = (float)progress_bar.Value / (float)progress_bar.Maximum;
-            float xpos = G * (progress_bar.ClientRectangle.Width - 2);
+            float G = progress_bar.Value / (float)progress_bar.Maximum;
+            float xpos = G * (progress_bar.ClientRectangle.Width - 28);
             xpos += 22;
             return new Point((int)xpos, 130);
+        }
+
+        delegate void ReduceSigniture(int a);
+        class ShotEvent
+        {
+
+            public static ReduceSigniture ReduceAbovePoint;
+
+            public ShotEvent()
+            {
+                ReduceAbovePoint += PrivateReduction;
+            }
+
+            private void PrivateReduction(int a)
+            {
+                if (signiture > a) signiture--;
+            }
+
+            ~ShotEvent()
+            {
+                ReduceAbovePoint -= PrivateReduction;
+            }
+
+            public int signiture;
+            public float timing;
+            public string type;
+            public Label textLabel;
         }
 
         //Adds entries to the lists
@@ -218,11 +250,11 @@ namespace Skills_Musical_Companion
         {
             if (Player.playState != WMPPlayState.wmppsPlaying)
                 EnableDisableButtons(false);
-            fileTiming.Add((float)Player.controls.currentPosition);
-            fileList.Add(input);
+
+            
 
             Color color = Color.Transparent;
-            switch(input)
+            switch (input)
             {
                 case "=":
                     color = Color.Gray;
@@ -243,11 +275,45 @@ namespace Skills_Musical_Companion
                     color = Color.HotPink;
                     break;
             } //Switch for the colors
-            
+
             Point p = GetHeadPoint();
             upCounter++;
-            Controls.Add(new Label { Location = p, AutoSize = true, Text = input, Name = "numberLabel"+upCounter, BackColor = color, Font = font});
+            Label meLabel = new Label { Location = p, AutoSize = true, TextAlign = ContentAlignment.MiddleCenter, Text = input, Name = "numberLabel" + upCounter, BackColor = color, Font = font };
+            meLabel.Click += new EventHandler(LabelClick);
+            Controls.Add(meLabel);
+
+            FileList.Add(
+                new ShotEvent()
+                {
+                    signiture = 1,
+                    timing = (float)Player.controls.currentPosition,
+                    type = input,
+                    textLabel = meLabel
+                }
+            );
+
             Controls["numberLabel" + upCounter].BringToFront();
+        }
+
+        void LabelClick(object sender, EventArgs e)
+        {
+            Label correctLabel = (Label)sender;
+            correctLabel.Hide();
+            ShotEvent se = null;
+            for (int i = 0; i < FileList.Count; i++)
+            {
+                if(FileList[i].textLabel == correctLabel)
+                {
+                    se = FileList[i];
+                    FileList.Remove(se);
+                    ShotEvent.ReduceAbovePoint(i);
+                    break;
+                }
+            }
+
+            if (pause.Text == "Play") EnableBuildFile();
+            
+
         }
 
         private void OpenFile_Click(object sender, EventArgs e) { UploadFile(); }
@@ -258,12 +324,13 @@ namespace Skills_Musical_Companion
             {
                 timer.Stop();
                 //hasStarted = false;
-                buildFile.Enabled = true;
+                EnableBuildFile();
             }
 
             if (NewState == 3)
             {
                 pause.Text = "Pause";
+                buildFile.Enabled = false;
                 EnableDisableButtons(true);
                 if (!hasStarted)
                 {
@@ -277,8 +344,18 @@ namespace Skills_Musical_Companion
             }
 
             else
+            {
                 pause.Text = "Play";
+                EnableBuildFile();
+            }
+                
         }
+
+        private void EnableBuildFile()
+        {
+            buildFile.Enabled = FileList.Count > 0;
+        }
+
 
         private void trackBar1_Scroll(object sender, EventArgs e)
         {
@@ -292,7 +369,7 @@ namespace Skills_Musical_Companion
                 timer.Stop();
             }
         }
-        
+
         private void progBar_release(object sender, MouseEventArgs e)
         {
             if (Player.URL != null)
@@ -331,29 +408,28 @@ namespace Skills_Musical_Companion
             save.ShowDialog();
             if (save.FileName != "")
             {
-                float[] timeArray = fileTiming.ToArray();
-                string[] inputSort = fileList.ToArray();
-                string[] timeFinal = new string[timeArray.Length];
-                Array.Sort(timeArray, inputSort);
-                for (int i = 0; i < timeArray.Length; i++)
+
+                ShotEvent[] sortedShots = FileList.OrderBy(c => c.timing).ToArray();
+                float finalTime = sortedShots[sortedShots.Length - 1].timing;
+                for (int i = 0; i < sortedShots.Length; i++)
                 {
-                    float x = timeArray[i];
-                    if(i!=0)
+                    float x = sortedShots[i].timing;
+                    if (i != 0)
                     {
-                        x -= timeArray[i - 1];
+                        x -= sortedShots[i - 1].timing;
                     }
                     x *= conversion_constant;
-                    timeFinal[i] = x.ToString();
+                    sortedShots[i].timing = x;
                 }
 
                 List<string> finalList = new List<string>();
                 finalList.Add(bpm.ToString());
-                for (int i = 0; i < timeArray.Length; i++)
+                for (int i = 0; i < sortedShots.Length; i++)
                 {
-                    finalList.Add(timeFinal[i]);
-                    finalList.Add(inputSort[i]);
+                    finalList.Add(sortedShots[i].timing.ToString());
+                    finalList.Add(sortedShots[i].type);
                 }
-                finalList.Add((Player.currentMedia.duration - timeArray[timeArray.Length - 1]).ToString());
+                finalList.Add((Player.currentMedia.duration - finalTime).ToString());
                 File.WriteAllLines(save.FileName, finalList.ToArray());
 
             }
@@ -364,15 +440,15 @@ namespace Skills_Musical_Companion
         {
             Reset();
             progress_bar.Value = 0;
-            fileList.Clear();
-            fileTiming.Clear();
+            FileList.Clear();
+
             hasStarted = false;
             timer.Stop();
             buildFile.Enabled = false;
             int counter = Controls.Count - controlNumber;
             for (int i = 1; i < counter; i++)
             {
-                Controls.RemoveByKey("numberLabel"+i);
+                Controls.RemoveByKey("numberLabel" + i);
             }
 
             if (Player.URL != null)
@@ -403,7 +479,7 @@ namespace Skills_Musical_Companion
         //Change the BPM
         private void bpm_label_Click(object sender, EventArgs e)
         {
-            GetBpm();
+            if (FileUploaded) GetBpm();
         }
 
         private void playback_speed_Scroll(object sender, EventArgs e)
@@ -422,7 +498,57 @@ namespace Skills_Musical_Companion
 
         private void rate_label2_Click(object sender, EventArgs e)
         {
-            MessageBox.Show($"Changes the rate of music playback.\nNot reccomended to change during playback.\nCurrent playback speed is {Player.settings.rate}");
+            MessageBox.Show($"Changes the rate of music playback.\nNot recommended to change during playback.\nCurrent playback speed is {Player.settings.rate}");
+        }
+
+        private void menuItem3_Click(object sender, EventArgs e)
+        {
+
+        }
+
+        private void menuItem5_Click(object sender, EventArgs e) => UploadFile();
+
+        bool ShowColors = true;
+
+        private void OriginalColors()
+        {
+            standard_attack.BackColor = Color.Gray;
+            shotgun_fire.BackColor = Color.Purple;
+            ringFire_attack.BackColor = Color.Red;
+            shrapnel_attack.BackColor = Color.Yellow;
+            ricochet_attack.BackColor = Color.Green;
+            pickup_standard_attack.BackColor = Color.HotPink;
+        }
+
+        private void menuItem7_Click(object sender, EventArgs e) // COLORS ON/OFF
+        {
+            if (ShowColors) // TURN OFF COLORS
+            {
+                standard_attack.BackColor =
+                shotgun_fire.BackColor =
+                shrapnel_attack.BackColor =
+                ringFire_attack.BackColor =
+                ricochet_attack.BackColor =
+                pickup_standard_attack.BackColor =
+                    SystemColors.Control;
+            }
+            else //ENABLE COLORS
+            {
+                OriginalColors();
+            }
+
+            ShowColors = !ShowColors;
+
+        }
+
+        private void menuItem6_Click(object sender, EventArgs e) //Clear
+        {
+            reset_button_Click(null, null);
+        }
+
+        private void nameLabel_Click(object sender, EventArgs e)
+        {
+            if (FileUploaded) MessageBox.Show(FileName, "Full File Name");
         }
     }
 }
@@ -502,6 +628,20 @@ namespace MsgBox
             DialogResult dialogResult = form.ShowDialog();
             value = textBox.Text;
             return dialogResult;
+        }
+    }
+}
+
+namespace ExtensionMethods
+{
+    public static class StringExtensions
+    {
+        public static string Truncate(this string input, int maxLength)
+        {
+            if (string.IsNullOrEmpty(input)) return input;
+
+            return (input.Length <= maxLength) ? input : input.Substring(0, maxLength - 3) + "...";
+
         }
     }
 }
